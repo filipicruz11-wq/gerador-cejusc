@@ -19,12 +19,16 @@ def get_dia_semana(data_str):
 
 def gerar_pdf_bytes(mediador, registros):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=20)
+    # Margens menores para aproveitar melhor o espaço
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=20, leftMargin=30, rightMargin=30)
     styles = getSampleStyleSheet()
     elementos = [Paragraph(mediador, styles['Title']), Spacer(1, 15)]
     
     headers = ["SEMANA", "DATA", "HORA", "PROCESSO", "SENHA", "VARA", "MEDIADOR"]
-    t = Table([headers] + registros, colWidths=[90, 70, 50, 110, 80, 110, 160])
+    
+    # AJUSTE AQUI: Coluna MEDIADOR agora tem 220 de largura
+    t = Table([headers] + registros, colWidths=[85, 65, 45, 110, 75, 100, 220])
+    
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f2cfc2")),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -32,6 +36,7 @@ def gerar_pdf_bytes(mediador, registros):
         ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
         ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#fff9c4")),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9), # Tamanho da fonte fixo para garantir que caiba
     ]))
     elementos.append(t)
     doc.build(elementos)
@@ -56,10 +61,14 @@ if st.button("GERAR PDFs"):
             match_base = re.search(r"(\d{2}/\d{2}/\d{4})\s+(\d{1,2}:\d{2})\s+(\d{7}-\d{2}\.\d{4})\s+(.*)", linha)
             if match_base:
                 data_pt, hora_pt, processo, resto = match_base.groups()
-                if "SEM DISPONIBILIDADE" in resto.upper(): mediador_chave = "SEM DISPONIBILIDADE"; miolo = resto.upper().split("SEM DISPONIBILIDADE")[0].strip()
-                elif "AUDIÊNCIA CANCELADA" in resto.upper(): mediador_chave = "AUDIÊNCIA CANCELADA"; miolo = resto.upper().split("AUDIÊNCIA CANCELADA")[0].strip()
-                elif "SIM" in resto: partes_sim = resto.rsplit("SIM", 1); miolo = partes_sim[0].strip(); mediador_chave = partes_sim[1].strip()
-                else: partes = resto.rsplit(maxsplit=1); miolo = partes[0] if len(partes) > 1 else ""; mediador_chave = partes[1] if len(partes) > 1 else "OUTROS"
+                if "SEM DISPONIBILIDADE" in resto.upper(): 
+                    mediador_chave = "SEM DISPONIBILIDADE"; miolo = resto.upper().split("SEM DISPONIBILIDADE")[0].strip()
+                elif "AUDIÊNCIA CANCELADA" in resto.upper(): 
+                    mediador_chave = "AUDIÊNCIA CANCELADA"; miolo = resto.upper().split("AUDIÊNCIA CANCELADA")[0].strip()
+                elif "SIM" in resto: 
+                    partes_sim = resto.rsplit("SIM", 1); miolo = partes_sim[0].strip(); mediador_chave = partes_sim[1].strip()
+                else: 
+                    partes = resto.rsplit(maxsplit=1); miolo = partes[0] if len(partes) > 1 else ""; mediador_chave = partes[1] if len(partes) > 1 else "OUTROS"
                 
                 partes_miolo = miolo.split(maxsplit=1)
                 senha = ""; vara = miolo
