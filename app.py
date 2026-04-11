@@ -1,11 +1,14 @@
 import streamlit as st
 import re
 import os
-import io
-import zipfile
 from datetime import datetime
 from collections import defaultdict
-from PIL import Image, ImageDraw, ImageFont
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+import io
+import zipfile
 
 def get_dia_semana(data_str):
     try:
@@ -14,75 +17,38 @@ def get_dia_semana(data_str):
         return dias[data.weekday()]
     except: return ""
 
-def gerar_jpg_bytes(mediador, registros):
-    # Configuração de tamanho e resolução (Landscape)
-    largura = 1200
-    altura_base = 600
-    imagem = Image.new('RGB', (largura, altura_base), color=(255, 255, 255))
-    draw = ImageDraw.Draw(imagem)
-    
-    # Tenta carregar fontes do sistema para evitar erro de acentuação (quadradinhos)
-    font_path = "arial.ttf" # Windows
-    if not os.path.exists(font_path):
-        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" # Linux/Render
-
-    try:
-        font_titulo = ImageFont.truetype(font_path, 28)
-        font_cabecalho = ImageFont.truetype(font_path, 14)
-        font_texto = ImageFont.truetype(font_path, 13)
-    except:
-        font_titulo = font_cabecalho = font_texto = ImageFont.load_default()
-
-    # Título centralizado
-    texto_titulo = str(mediador).upper()
-    draw.text((largura//2, 50), texto_titulo, fill=(0, 0, 0), font=font_titulo, anchor="mm")
-
-    # Configuração da Tabela (Medidas baseadas no seu PDF original)
-    headers = ["SEMANA", "DATA", "HORA", "PROCESSO", "SENHA", "VARA", "MEDIADOR"]
-    col_widths = [120, 90, 70, 160, 110, 180, 320] 
-    x_start = (largura - sum(col_widths)) // 2
-    y_start = 100
-    row_height = 35
-
-    # Desenhar Cabeçalho (Cor Hex #f2cfc2)
-    curr_x = x_start
-    for i, h in enumerate(headers):
-        draw.rectangle([curr_x, y_start, curr_x + col_widths[i], y_start + row_height], fill="#f2cfc2", outline="black")
-        # Centralizar texto no cabeçalho
-        bbox = draw.textbbox((0, 0), h, font=font_cabecalho)
-        w_text = bbox[2] - bbox[0]
-        draw.text((curr_x + (col_widths[i] - w_text)/2, y_start + 10), h, fill="black", font=font_cabecalho)
-        curr_x += col_widths[i]
-
-    # Desenhar Linhas de Dados (Cor Hex #fff9c4)
-    for row_idx, reg in enumerate(registros):
-        curr_x = x_start
-        y = y_start + (row_idx + 1) * row_height
-        for i, text in enumerate(reg):
-            draw.rectangle([curr_x, y, curr_x + col_widths[i], y + row_height], fill="#fff9c4", outline="black")
-            # Centralizar texto na célula
-            txt = str(text)
-            bbox = draw.textbbox((0, 0), txt, font=font_texto)
-            w_text = bbox[2] - bbox[0]
-            draw.text((curr_x + (col_widths[i] - w_text)/2, y + 10), txt, fill="black", font=font_texto)
-            curr_x += col_widths[i]
-
-    # Corta a imagem para remover o excesso de branco abaixo da tabela
-    altura_final = y_start + (len(registros) + 2) * row_height
-    imagem = imagem.crop((0, 0, largura, altura_final))
-
+def gerar_pdf_bytes(mediador, registros):
     buffer = io.BytesIO()
-    imagem.save(buffer, format="JPEG", quality=100)
+    # Margens menores para aproveitar melhor o espaço
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=20, leftMargin=30, rightMargin=30)
+    styles = getSampleStyleSheet()
+    elementos = [Paragraph(mediador, styles['Title']), Spacer(1, 15)]
+    
+    headers = ["SEMANA", "DATA", "HORA", "PROCESSO", "SENHA", "VARA", "MEDIADOR"]
+    
+    # AJUSTE AQUI: Coluna MEDIADOR agora tem 220 de largura
+    t = Table([headers] + registros, colWidths=[85, 65, 45, 110, 75, 100, 220])
+    
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f2cfc2")),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#fff9c4")),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9), # Tamanho da fonte fixo para garantir que caiba
+    ]))
+    elementos.append(t)
+    doc.build(elementos)
     return buffer.getvalue()
 
-# Interface Streamlit
-st.set_page_config(page_title="Gerador de Imagens CEJUSC", layout="centered")
-st.title("🖼️ Gerador de Imagens (JPG) - CEJUSC")
-st.write("Cole a pauta abaixo para gerar os arquivos em imagem.")
+st.set_page_config(page_title="Gerador de PDFs CEJUSC", layout="centered")
+st.title("📄 Gerador de PDFs - CEJUSC")
+st.write("Cole a pauta abaixo e clique no botão para gerar os arquivos.")
 
 texto_pauta = st.text_area("Cole a pauta aqui:", height=300)
 
-if st.button("GERAR IMAGENS"):
+if st.button("GERAR PDFs"):
     if not texto_pauta.strip():
         st.warning("Por favor, cole os dados antes de processar.")
     else:
@@ -117,14 +83,8 @@ if st.button("GERAR IMAGENS"):
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                 for med, regs in dados_por_mediador.items():
-                    # Gerar a imagem para cada mediador
-                    img_data = gerar_jpg_bytes(med, regs)
-                    zip_file.writestr(f"{med.replace(' ', '_')}.jpg", img_data)
+                    pdf_data = gerar_pdf_bytes(med, regs)
+                    zip_file.writestr(f"{med.replace(' ', '_')}.pdf", pdf_data)
             
-            st.success(f"Sucesso! {len(dados_por_mediador)} pautas geradas.")
-            st.download_button(
-                label="📥 BAIXAR TODAS AS IMAGENS (ZIP)", 
-                data=zip_buffer.getvalue(), 
-                file_name="pautas_cejusc_jpg.zip", 
-                mime="application/zip"
-            )
+            st.success(f"Sucesso! {len(dados_por_mediador)} mediadores identificados.")
+            st.download_button(label="📥 BAIXAR TODOS OS PDFs (ZIP)", data=zip_buffer.getvalue(), file_name="pautas_cejusc.zip", mime="application/zip")
