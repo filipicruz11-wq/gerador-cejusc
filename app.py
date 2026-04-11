@@ -1,5 +1,6 @@
 import streamlit as st
 import re
+import os
 import io
 import zipfile
 from datetime import datetime
@@ -14,55 +15,74 @@ def get_dia_semana(data_str):
     except: return ""
 
 def gerar_jpg_bytes(mediador, registros):
-    # Configurações de imagem (simulando um landscape A4)
-    largura, altura = 1123, 794
-    imagem = Image.new('RGB', (largura, altura), color=(255, 255, 255))
+    # Configuração de tamanho e resolução (Landscape)
+    largura = 1200
+    altura_base = 600
+    imagem = Image.new('RGB', (largura, altura_base), color=(255, 255, 255))
     draw = ImageDraw.Draw(imagem)
     
+    # Tenta carregar fontes do sistema para evitar erro de acentuação (quadradinhos)
+    font_path = "arial.ttf" # Windows
+    if not os.path.exists(font_path):
+        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" # Linux/Render
+
     try:
-        # Tenta carregar uma fonte padrão do sistema, se falhar usa a básica
-        font_titulo = ImageFont.truetype("arial.ttf", 24)
-        font_texto = ImageFont.truetype("arial.ttf", 12)
+        font_titulo = ImageFont.truetype(font_path, 28)
+        font_cabecalho = ImageFont.truetype(font_path, 14)
+        font_texto = ImageFont.truetype(font_path, 13)
     except:
-        font_titulo = ImageFont.load_default()
-        font_texto = ImageFont.load_default()
+        font_titulo = font_cabecalho = font_texto = ImageFont.load_default()
 
-    # Desenhar Título
-    draw.text((largura//2, 40), mediador, fill=(0, 0, 0), font=font_titulo, anchor="mm")
+    # Título centralizado
+    texto_titulo = str(mediador).upper()
+    draw.text((largura//2, 50), texto_titulo, fill=(0, 0, 0), font=font_titulo, anchor="mm")
 
-    # Cabeçalhos e Tabela
+    # Configuração da Tabela (Medidas baseadas no seu PDF original)
     headers = ["SEMANA", "DATA", "HORA", "PROCESSO", "SENHA", "VARA", "MEDIADOR"]
-    col_widths = [130, 100, 70, 160, 100, 150, 300]
-    x_start, y_start = 50, 100
-    row_height = 25
+    col_widths = [120, 90, 70, 160, 110, 180, 320] 
+    x_start = (largura - sum(col_widths)) // 2
+    y_start = 100
+    row_height = 35
 
-    # Desenhar Cabeçalho
+    # Desenhar Cabeçalho (Cor Hex #f2cfc2)
     curr_x = x_start
     for i, h in enumerate(headers):
         draw.rectangle([curr_x, y_start, curr_x + col_widths[i], y_start + row_height], fill="#f2cfc2", outline="black")
-        draw.text((curr_x + 5, y_start + 5), h, fill="black", font=font_texto)
+        # Centralizar texto no cabeçalho
+        bbox = draw.textbbox((0, 0), h, font=font_cabecalho)
+        w_text = bbox[2] - bbox[0]
+        draw.text((curr_x + (col_widths[i] - w_text)/2, y_start + 10), h, fill="black", font=font_cabecalho)
         curr_x += col_widths[i]
 
-    # Desenhar Registros
+    # Desenhar Linhas de Dados (Cor Hex #fff9c4)
     for row_idx, reg in enumerate(registros):
         curr_x = x_start
         y = y_start + (row_idx + 1) * row_height
         for i, text in enumerate(reg):
             draw.rectangle([curr_x, y, curr_x + col_widths[i], y + row_height], fill="#fff9c4", outline="black")
-            draw.text((curr_x + 5, y + 5), str(text), fill="black", font=font_texto)
+            # Centralizar texto na célula
+            txt = str(text)
+            bbox = draw.textbbox((0, 0), txt, font=font_texto)
+            w_text = bbox[2] - bbox[0]
+            draw.text((curr_x + (col_widths[i] - w_text)/2, y + 10), txt, fill="black", font=font_texto)
             curr_x += col_widths[i]
 
+    # Corta a imagem para remover o excesso de branco abaixo da tabela
+    altura_final = y_start + (len(registros) + 2) * row_height
+    imagem = imagem.crop((0, 0, largura, altura_final))
+
     buffer = io.BytesIO()
-    imagem.save(buffer, format="JPEG", quality=95)
+    imagem.save(buffer, format="JPEG", quality=100)
     return buffer.getvalue()
 
-st.set_page_config(page_title="Gerador de JPGs CEJUSC", layout="centered")
-st.title("🖼️ Gerador de JPGs - CEJUSC")
-st.write("Cole a pauta abaixo e clique no botão para gerar as imagens.")
+# Interface Streamlit
+st.set_page_config(page_title="Gerador de Imagens CEJUSC", layout="centered")
+st.title("🖼️ Gerador de Imagens (JPG) - CEJUSC")
+st.write("Cole a pauta abaixo para gerar os arquivos em imagem.")
 
 texto_pauta = st.text_area("Cole a pauta aqui:", height=300)
 
-if st.button("GERAR JPGs"):
+if st.button("GERAR IMAGENS"):
     if not texto_pauta.strip():
         st.warning("Por favor, cole os dados antes de processar.")
     else:
@@ -97,8 +117,14 @@ if st.button("GERAR JPGs"):
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                 for med, regs in dados_por_mediador.items():
-                    jpg_data = gerar_jpg_bytes(med, regs)
-                    zip_file.writestr(f"{med.replace(' ', '_')}.jpg", jpg_data)
+                    # Gerar a imagem para cada mediador
+                    img_data = gerar_jpg_bytes(med, regs)
+                    zip_file.writestr(f"{med.replace(' ', '_')}.jpg", img_data)
             
-            st.success(f"Sucesso! {len(dados_por_mediador)} mediadores identificados.")
-            st.download_button(label="📥 BAIXAR TODOS OS JPGs (ZIP)", data=zip_buffer.getvalue(), file_name="pautas_cejusc.zip", mime="application/zip")
+            st.success(f"Sucesso! {len(dados_por_mediador)} pautas geradas.")
+            st.download_button(
+                label="📥 BAIXAR TODAS AS IMAGENS (ZIP)", 
+                data=zip_buffer.getvalue(), 
+                file_name="pautas_cejusc_jpg.zip", 
+                mime="application/zip"
+            )
