@@ -19,14 +19,12 @@ def get_dia_semana(data_str):
 
 def gerar_pdf_bytes(mediador, registros):
     buffer = io.BytesIO()
-    # Margens menores para aproveitar melhor o espaço
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), topMargin=20, leftMargin=30, rightMargin=30)
     styles = getSampleStyleSheet()
-    elementos = [Paragraph(mediador, styles['Title']), Spacer(1, 15)]
+    elementos = [Paragraph(f"Pauta: {mediador}", styles['Title']), Spacer(1, 15)]
     
     headers = ["SEMANA", "DATA", "HORA", "PROCESSO", "SENHA", "VARA", "MEDIADOR"]
     
-    # AJUSTE AQUI: Coluna MEDIADOR agora tem 220 de largura
     t = Table([headers] + registros, colWidths=[85, 65, 45, 110, 75, 100, 220])
     
     t.setStyle(TableStyle([
@@ -36,7 +34,7 @@ def gerar_pdf_bytes(mediador, registros):
         ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
         ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#fff9c4")),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9), # Tamanho da fonte fixo para garantir que caiba
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
     ]))
     elementos.append(t)
     doc.build(elementos)
@@ -44,7 +42,7 @@ def gerar_pdf_bytes(mediador, registros):
 
 st.set_page_config(page_title="Gerador de PDFs CEJUSC", layout="centered")
 st.title("📄 Gerador de PDFs - CEJUSC")
-st.write("Cole a pauta abaixo e clique no botão para gerar os arquivos.")
+st.write("Cole a pauta no novo formato (Colunas separadas por TAB ou espaços).")
 
 texto_pauta = st.text_area("Cole a pauta aqui:", height=300)
 
@@ -58,33 +56,50 @@ if st.button("GERAR PDFs"):
         for linha in linhas:
             linha = linha.strip()
             if not linha: continue
-            match_base = re.search(r"(\d{2}/\d{2}/\d{4})\s+(\d{1,2}:\d{2})\s+(\d{7}-\d{2}\.\d{4})\s+(.*)", linha)
-            if match_base:
-                data_pt, hora_pt, processo, resto = match_base.groups()
-                if "SEM DISPONIBILIDADE" in resto.upper(): 
-                    mediador_chave = "SEM DISPONIBILIDADE"; miolo = resto.upper().split("SEM DISPONIBILIDADE")[0].strip()
-                elif "AUDIÊNCIA CANCELADA" in resto.upper(): 
-                    mediador_chave = "AUDIÊNCIA CANCELADA"; miolo = resto.upper().split("AUDIÊNCIA CANCELADA")[0].strip()
-                elif "SIM" in resto: 
-                    partes_sim = resto.rsplit("SIM", 1); miolo = partes_sim[0].strip(); mediador_chave = partes_sim[1].strip()
-                else: 
-                    partes = resto.rsplit(maxsplit=1); miolo = partes[0] if len(partes) > 1 else ""; mediador_chave = partes[1] if len(partes) > 1 else "OUTROS"
-                
-                partes_miolo = miolo.split(maxsplit=1)
-                senha = ""; vara = miolo
-                if partes_miolo:
-                    primeira = partes_miolo[0]
-                    if "ª" not in primeira and "º" not in primeira or primeira.upper() == "CANCELADA":
-                        senha = primeira; vara = partes_miolo[1] if len(partes_miolo) > 1 else ""
-                
-                dados_por_mediador[mediador_chave].append([get_dia_semana(data_pt), data_pt, hora_pt, processo, senha, vara, mediador_chave])
+            
+            # Divide a linha por TAB ou múltiplos espaços
+            partes = re.split(r'\t|\s{2,}', linha)
+            
+            if len(partes) >= 6:
+                data_pt = partes[0].strip()
+                hora_pt = partes[1].strip()
+                processo = partes[2].strip()
+                senha = partes[3].strip()
+                vara = partes[4].strip()
+                mediador_chave = partes[5].strip()
+
+                # Lógica para tratar Cancelados ou Sem Disponibilidade
+                # Se o texto "CANCELADA" aparecer em qualquer lugar da linha, agrupamos no arquivo de cancelados
+                if "CANCELADA" in linha.upper() or "CANCELADO" in linha.upper():
+                    mediador_chave = "AUDIÊNCIA CANCELADA"
+                elif "SEM DISPONIBILIDADE" in linha.upper():
+                    mediador_chave = "SEM DISPONIBILIDADE"
+
+                dados_por_mediador[mediador_chave].append([
+                    get_dia_semana(data_pt), 
+                    data_pt, 
+                    hora_pt, 
+                    processo, 
+                    senha, 
+                    vara, 
+                    mediador_chave
+                ])
 
         if dados_por_mediador:
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                for med, regs in dados_por_mediador.items():
+                # Ordena os mediadores por nome para o ZIP ficar organizado
+                for med in sorted(dados_por_mediador.keys()):
+                    regs = dados_por_mediador[med]
                     pdf_data = gerar_pdf_bytes(med, regs)
-                    zip_file.writestr(f"{med.replace(' ', '_')}.pdf", pdf_data)
+                    # Limpa o nome do arquivo para evitar erros de caracteres
+                    nome_arquivo = med.replace(' ', '_').replace('/', '-')
+                    zip_file.writestr(f"{nome_arquivo}.pdf", pdf_data)
             
-            st.success(f"Sucesso! {len(dados_por_mediador)} mediadores identificados.")
-            st.download_button(label="📥 BAIXAR TODOS OS PDFs (ZIP)", data=zip_buffer.getvalue(), file_name="pautas_cejusc.zip", mime="application/zip")
+            st.success(f"Sucesso! {len(dados_por_mediador)} categorias/mediadores identificados.")
+            st.download_button(
+                label="📥 BAIXAR TODOS OS PDFs (ZIP)", 
+                data=zip_buffer.getvalue(), 
+                file_name="pautas_cejusc.zip", 
+                mime="application/zip"
+            )
